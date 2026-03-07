@@ -10,8 +10,11 @@ The DeciLoad encoder is written in C and is supplied compiled for Windows PCs (a
 The DeciLoad loader is written in Z80 assembly, and is also supplied as compiled binaries. Multiple versions of the loader are provided, supporting four different baud-rates:
 
 8.1kbaud (8102 baud, 432 T-states per encoded data bit)
+
 10.4kbaud (10417 baud, 336 T-states per encoded data bit)
+
 11.5kbaud (11513 baud, 304 T-states per encoded data bit)
+
 12.8kbaud (12868 baud, 272 T-states per encoded data bit)
 
 The loader recognises the DeciLoad lead-in sequence, analogous to the Pilot Tone used by the standard Spectrum loader, and loads data of specified length starting at a specified memory address, performing real-time decoding of the 8b/10b-encoded data stream. The loader continuously monitors the timings of "edges" in the input data waveform, adjusting its timing to track small variations in tape speed.
@@ -20,7 +23,7 @@ The loader recognises the DeciLoad lead-in sequence, analogous to the Pilot Tone
 DeciLoad Encoder - USAGE
 ========================
 
-deciload [options] [input filename] [output filename]
+>deciload [options] [input filename] [output filename]
 
 Options (note no space between the specifier letter and the value):
 
@@ -43,6 +46,7 @@ Options (note no space between the specifier letter and the value):
 -p[time] : Time-constant for phase-correction filter (default 0)
 
 Input filename: binary input data, e.g. memory dump from a ZX Spectrum emulator or raw binary data extracted from a TZX file
+
 Output filename: output audio file in .WAV file format. The filename should include the .wav extension.
 
 The default values for pre-emphasis and low-frequency compensation have been found to be roughly optimal for reliable operation when recorded to cassette tape and loaded on a 48k ZX Spectrum. The pre-compensation process manipulates the input waveform quite strongly, to the extent that the data is generally unrecognisable if it has NOT been passed through a tape recording / playback process and through the tape input circuitry of a real ZX Spectrum. Spectrum emulators generally do NOT model the signal manipulation effects of real tape and ZX Spectrum hardware, and so will fail to load an encoded WAV file using the default settings. To generate a DeciLoad-encoded WAV file suitable for loading into an emulator, some of the pre-compensation options must be disabled or significantly reduced in magnitude.
@@ -50,7 +54,7 @@ The default values for pre-emphasis and low-frequency compensation have been fou
 Currently the output WAV file is always in 16-bit (signed) format. Generally the output will easily tolerate conversion to 8-bit resolution without affecting reliability. (I would NOT recommend compressing it with a lossy codec such as MP3!)
 
 
-Examples:
+**Examples:**
 
 To encode input file "data.bin" at the default baud-rate of 10.4kbaud, using default tape pre-compensation settings:
 
@@ -67,7 +71,7 @@ deciload -e30 -l300 -b12868 data.bin output.wav
 These are only examples. All combinations of different options and baud rates may be used.
 
 
-Further explanation of options:
+**Further explanation of options:**
 
 -r[sample rate] : This can usually be left at the default 44.1kHz, which is a universally supported standard audio sample rate. The encoded file contains no significant frequency content above about half the baud-rate, so ideally there is no benefit to increasing the sample rate (it will only increase the output file size). However, some Spectrum emulators may benefit if they neglect to perform interpolation between samples when reading a WAV file as an emulated tape.
 
@@ -92,27 +96,39 @@ DeciLoad Loader - USAGE
 
 The loader is supplied in Z80 assembly and binaries, in "bare" form for calling from machine code, and in packaged form (filename suffx _usr) for calling from BASIC as a USR function. Four versions of the loader are provided in each form, for baud rates of 8102 baud (UI = 432 T-states), 10417 baud (UI = 336 T-states), 11513 baud (UI = 304 T-states), and 12868 baud (UI = 272 T-states). 
 
-Usage instructions - bare form:
 
-8.1kbaud, 10.4kbaud and 11.5kbaud loaders:
+Usage instructions - bare form:
+-------------------------------
+
+**8.1kbaud, 10.4kbaud and 11.5kbaud loaders:**
+
 Call address 65288 with interrupts disabled, base address for load data in HL, and data length in IX. Stack pointer must be in uncontended memory.
 
-12.8kbaud loader:
+**12.8kbaud loader:**
+
 Call address 65272 with interrupts disabled, base address for load data in HL, and data length in BC*. Stack pointer must be in uncontended memory.
+
 *Note different register assignment for the "data length" value between the 8.1 / 10.4 / 11.5k loaders and the 12.8k loader.
 
+
 The code can be reassembled with a different origin address if required, provided the code remains in uncontended memory. The code contains absolute jumps and is not relocatable without reassembling.
+
 Sync byte value (default $35) can be changed if required by editing the "cp $35" instruction.
+
 Loader returns with checksum in register A, with 0 indicating a successful load and any other value indicating an error. All other registers (except interrupt vector) corrupt, including shadow and index registers.
 
 
 Usage instructions - packaged form (filename suffix _usr):
+----------------------------------------------------------
 
-8.1kbaud, 10.4kbaud and 11.5kbaud loaders:
+
+**8.1kbaud, 10.4kbaud and 11.5kbaud loaders:**
+
 Call from BASIC with USR 65270. Load base address and length are pre-filled with the values 16384 and 6912 respectively, for loading a screen. Alternative values can be POKEd at addresses 65271/2 and 65275/6 respectively (LSByte first). CLEAR address must be less than 65270 (the start address of the loader routine), and above about 32800 to ensure that the stack points to uncontended memory.
 The loader checksum is returned in register BC as the result of the USR function. 0 indicates a successful load, any other value indicates an error.
 
-12.8kbaud loader:
+**12.8kbaud loader:**
+
 Call from BASIC with USR 65256. Load base address and length are pre-filled with the values 16384 and 6912 respectively, for loading a screen. Alternative values can be POKEd at addresses 65257/8 and 65260/1 respectively (LSByte first). CLEAR address must be less than 65256 (the start address of the loader routine), and above about 32800 to ensure that the stack points to uncontended memory.
 The loader checksum is returned in register BC as the result of the USR function. 0 indicates a successful load, any other value indicates an error.
 
