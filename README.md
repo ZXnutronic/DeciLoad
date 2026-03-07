@@ -9,13 +9,13 @@ The DeciLoad encoder is written in C and is supplied compiled for Windows PCs (a
 
 The DeciLoad loader is written in Z80 assembly, and is also supplied as compiled binaries. Multiple versions of the loader are provided, supporting four different baud-rates:
 
-8.1kbaud (8102 baud, 432 T-states per encoded data bit)
+**8.1kbaud** (8102 baud, 432 T-states per encoded data bit)
 
-10.4kbaud (10417 baud, 336 T-states per encoded data bit)
+**10.4kbaud** (10417 baud, 336 T-states per encoded data bit)
 
-11.5kbaud (11513 baud, 304 T-states per encoded data bit)
+**11.5kbaud** (11513 baud, 304 T-states per encoded data bit)
 
-12.8kbaud (12868 baud, 272 T-states per encoded data bit)
+**12.8kbaud** (12868 baud, 272 T-states per encoded data bit)
 
 The loader recognises the DeciLoad lead-in sequence, analogous to the Pilot Tone used by the standard Spectrum loader, and loads data of specified length starting at a specified memory address, performing real-time decoding of the 8b/10b-encoded data stream. The loader continuously monitors the timings of "edges" in the input data waveform, adjusting its timing to track small variations in tape speed.
 
