@@ -1,6 +1,7 @@
-; DeciLoad 10.4kbaud Loader v1.0
+; DeciLoad 10.4kbaud Loader v1.1
 ; (c) 2026 Jonah Nuttgens
 ; Unit Interval = 336 T-states
+; Baud rate = 10417baud at 3.5MHz
 
 ; Assembled length = 265 bytes
 
@@ -11,7 +12,7 @@
 prep	ld hl,16384
 	ld ix,6912
 
-; Enter with HL = load start address, IX = byte count (excluding checksum)
+; Enter with HL = load start address, IX = byte count (excluding checksum), interrupts disabled.
 decld10	di
 	push iy		;Save IY if intending to return to BASIC after loading.
 	ld iy,lutbase	;Base address of the 3b/4b decode LUT. 5b/6b LUT is offset by -32 bytes, with the first and last 5 entries unused.
@@ -23,6 +24,7 @@ decld10	di
 	push hl		;Save HL' if intending to return to BASIC.
 	ld hl,retpepo	;Address of self-modifying opcode
 	exx
+	ld (iy+(eborder-lutbase)),$1D	;Initialise "eborder" opcode to "dec e"
 	call nopilot	;Jump in to the "nopilot" routine, saving the "return" address as the "edgedet" routine.
 
 ;This section is reached if we detect an edge (change of EAR signal state) during the tape input polling loop, which triggers the condition RET instruction, either RET PE or RET PO.
@@ -30,17 +32,17 @@ edgedet	dec sp		;Edge detected
 	dec sp		;Decrement Stack Pointer so the return address can be reused next time
 	xor e		;Flip A between $E0 and $E8, opcodes for ret po and ret pe respectively
 	ld (hl),a	;Update opcode at address HL
-	ld e,d		;Setup E with OUT data, containing border colour in bits 2:0
-	dec e		;E is now in the range 0-7
-	set 3,e		;Bit 3 of the OUT data value must always be SET during tape loading (at least on the 48k Spectrum)
-	dec d		;Start counting down the remaining value of D. The first iteration takes 16T, subsequent iterations take 24T.
+	nop		;First iteration of "runout" loop - do not touch E yet
+	nop
+	dec d
 	jr z,endui
-	ld (hl),a	;7T padding (This simply duplicates the earlier ld (hl),a instruction, therefore having no effect.)
-runout	dec d
-	jp z,endui	;24T loop to count down the remaining value of D
-	jp runout
+	ret z		;5T padding (condition always false)
+runout	inc e
+eborder	nop		;This instruction initialised at "dec e" - modified at runtime to "nop" to start modifying the border colour.
+	dec d
+	jr nz,runout	;24T loop to count down the remaining value of D
 
-;This section is reached at the end of each UI. If reached directly from the polling loop (D = 0), then we need an extra 5T padding to round up the loop time to a multiple of 8T.
+;This section is reached at the end of each UI.
 noedge	ret nz		;5T padding
 endui	exx
 	cp $E8		;Test whether A (holding the conditional RET opcode) is $E0 or $E8, setting the Carry flag accordingly
@@ -63,15 +65,29 @@ endui	exx
 ;
 ;If an edge is detected:
 ;From first execution of "detedge" to "edgedet" = (32(n-m)+27)T
-;From "edgedet" to "endui" if m=1 = 55T
-;From "edgedet" to "endui" if m>1 = (24m+23)T
-;Total from first execution of "detedge" to "endui" if m>1 = (32n-8m+50)T
+;From "edgedet" to "endui" = (24m+23)T
+;Total from first execution of "detedge" to "endui" = (32n-8m+50)T
 ;Total loop time = (32n-8m+120)T, which equals 1UI when m=5.
 
 ;Theoretical "perfect" edge timing is midway between IN samples for D=6 and D=5. Time from first "detedge" to this point is 32(n-5.5) = 80T
 ;Centre of eye is 0.5UI either side of this = 168T away = -88T from first "detedge".
 
 ;Time from "endui" to "process" = 39T
+
+
+;Now the LUT, starting from index 5 for the 5b/6b decodes (since values 0-4 are unused)
+;The 3b/4b decoding table overlaps with a 32-byte offset
+;Bits 7:5 are the 3b/4b decode values, inverted; bits 4:0 are the 5b/6b decode values.
+;Special values: $E0 = error (all 0's or all 1's in the 4b data), and $3C = K28 (for possible future use).
+	defb $17,$08,$07
+	defb $00,$1B,$04,$14,$18,$0C,$1C,$3C
+	defb $00,$1D,$02,$12,$1F,$0A,$1A,$0F
+	defb $00,$06,$16,$10,$0E,$01,$1E,$00
+lutbase	defb $E0,$1E,$61,$91,$F0,$A9,$39,$00
+	defb $0F,$C5,$55,$FF,$8D,$62,$1D,$E0
+	defb $3C,$03,$13,$18,$0B,$04,$1B,$00
+	defb $07,$08,$17
+
 
 ;Next section deals with interpreting / decoding a string of bits captured from tape
 process	ld a,e		;Invert contents of E first. D will be dealt with later if necessary.
@@ -89,8 +105,7 @@ nextpil	ld d,2		;Pilot byte matches - capture next 8 bits
 pilot	dec b
 	cp $CA		;Test received byte against pilot pattern $CA
 	jr z,nextpil
-	ret z		;10T padding
-	ret z
+	dec de		;6T padding. Safe to corrupt DE at this point
 nopilot	ld b,$FE	;Reset pilot counter
 	xor a
 	cpl		;A=$FF
@@ -100,13 +115,15 @@ nopilot	ld b,$FE	;Reset pilot counter
 	ld d,a		;Next word captured is either 8 bits or 9 bits long, depending on polarity setting
 	ld a,11
 jrpad	jr decpad
-datago	dec b		;Revert B to $FF
-	ld a,13
-	jp datago2
+datago	xor a
+	ld (eborder),a	;Change "eborder" instruction to "nop", to start showing border colours
+	ld a,12
+	djnz datago2	;Revert B to $FF. Jump is always taken.
 
 ;Time from "process" to "decode" = 22T
 ;Therefore time from "endui" to "decode" = 61T
 ;Time from "process" to "sample1" (through all possible branches) = 287T
+;(additional 4T via "sync" and "nopilot", but this is a rare error condition so it shouldn't matter.)
 
 
 ;Main tape input polling loop, with repetition rate of 32T. It is placed here to put it within reach of relative jumps in and out of the routine.
@@ -181,28 +198,14 @@ sample1	in a,(c)	;80T from here to "detedge"
 	jr detedge
 
 ;Exit and return
-exit	ld b,a		;A=0
-	ex af,af'
-error	ld c,a		;Output checksum. Arriving here via "error" jump skips the ex af,af' instruction, leaving A=$E0
-	exx
-	out (c),a	;Clear port FE, setting border black
-	pop hl		;Dummy pop to clear the call return address from the stack
+exit	ex af,af'
+;Arriving here via "error" jump skips the ex af,af' instruction, leaving A=$E0
+error	pop hl		;Dummy pop to clear the call return address from the stack
 	pop hl		;Restore HL' before returning to BASIC
 	exx
+	out (c),d	;Clear port FE, setting border black
+	ld b,d		;D=0
+	ld c,a		;Output checksum
 	pop iy		;Restore IY before returning to BASIC
 	ei
 	ret
-
-;Now the LUT, starting from index 5 for the 5b/6b decodes (since values 0-4 are unused)
-;The 3b/4b decoding table overlaps with a 32-byte offset
-;Bits 7:5 are the 3b/4b decode values, inverted; bits 4:0 are the 5b/6b decode values.
-;Special values: $E0 = error (all 0's or all 1's in the 4b data), and $3C = K28 (for possible future use).
-	defb $17,$08,$07
-	defb $00,$1B,$04,$14,$18,$0C,$1C,$3C
-	defb $00,$1D,$02,$12,$1F,$0A,$1A,$0F
-	defb $00,$06,$16,$10,$0E,$01,$1E,$00
-lutbase	defb $E0,$1E,$61,$91,$F0,$A9,$39,$00
-	defb $0F,$C5,$55,$FF,$8D,$62,$1D,$E0
-	defb $3C,$03,$13,$18,$0B,$04,$1B,$00
-	defb $07,$08,$17
-

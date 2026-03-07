@@ -1,18 +1,18 @@
-; DeciLoad 11.5kbaud Loader v1.1
+; DeciLoad 12.8kbaud Loader v1.1
 ; (c) 2026 Jonah Nuttgens
-; Unit Interval = 304 T-states
-; Baud rate = 11513baud at 3.5MHz
+; Unit Interval = 272 T-states
+; Baud rate = 12868baud at 3.5MHz
 
-; Assembled length = 244 bytes
+; Assembled length = 264 bytes
 
 ; Note use of undocumented Z80 opcode ED 70 at "detedge".
 ; This is coded as either "in (c)" or "in f,(c)" depending on the assembler.
 
-	org 65288
-; Enter with HL = load start address, IX = byte count (excluding checksum), interrupts disabled.
-decld11	ld iy,lutbase	;Base address of the 3b/4b decode LUT. 5b/6b LUT is offset by -32 bytes, with the first and last 5 entries unused.
+	org 65272
+; Enter with HL = load start address, BC = byte count (excluding checksum), interrupts disabled.
+decld12	ld iy,lutbase	;Base address of the 3b/4b decode LUT. 5b/6b LUT is offset by -32 bytes, with the first and last 5 entries unused.
 	xor a		;Initialise checksum to zero
-	ld c,a		;C = polarity (00 or FF), B = status / pilot counter, starting from $FE
+	ld ixh,a	;IXH = polarity (00 or FF), IXL = status / pilot counter, starting from $FF
 	ex af,af'
 	exx
 	ld bc,$FFFE	;IN port address = $FFFE
@@ -20,6 +20,9 @@ decld11	ld iy,lutbase	;Base address of the 3b/4b decode LUT. 5b/6b LUT is offset
 	exx
 	ld a,$1D
 	ld (eborder),a	;Initialise "eborder" opcode to "dec e"
+	ld a,process-jrfrom
+	ld (jrfrom-1),a	;Initialise jump address to "process" routine. This will be modified to point to "decode" when sync byte is found
+	inc bc
 	call nopilot	;Jump in to the "nopilot" routine, saving the "return" address as the "edgedet" routine.
 
 ;This section is reached if we detect an edge (change of EAR signal state) during the tape input polling loop, which triggers the condition RET instruction, either RET PE or RET PO.
@@ -27,6 +30,9 @@ edgedet	dec sp		;Edge detected
 	dec sp		;Decrement Stack Pointer so the return address can be reused next time
 	xor e		;Flip A between $E0 and $E8, opcodes for ret po and ret pe respectively
 	ld (hl),a	;Update opcode at address HL
+	dec d		;First step of runout timer
+	jr z,endui
+	ret z		;5T padding (condition always false)
 runout	inc e
 eborder	nop		;This instruction initialised at "dec e" - modified at runtime to "nop" to start modifying the border colour.
 	dec d
@@ -37,12 +43,20 @@ noedge	ret nz		;5T padding
 endui	exx
 	cp $E8		;Test whether A (holding the conditional RET opcode) is $E0 or $E8, setting the Carry flag accordingly
 	rl e		;Shift the received bit into DE'
-	rl d
-	jr c,process	;If a 1 pops out the other end of the shift register, then we have captured a complete data word. Go and process it.
-	exx
+	rl d		;If a 1 pops out the other end of the shift register, then we have captured a complete data word. Go and process it.
+	jr c,decode	;Displacement byte is modified at runtime to jump to either "process" or "decode"
+jrfrom	exx
 	out (c),e	;Update border colour. This will be black (E=$08) if no edge was detected, else the colour indicates the relative timing of the edge.
-	ld de,$0708	;Reset polling loop counter D and default OUT data value E
+	ld de,$0608	;Reset polling loop counter D and default OUT data value E
 	jp detedge	;Start next Unit Interval.
+
+;Main tape input polling loop, with repetition rate of 32T
+retpepo	ret po		;This will be modified at runtime, alternating between ret po and ret pe
+	dec d
+	jr z,noedge	;If D reaches zero during this loop, then it means no data edge was detected in this Unit Interval.
+detedge	in (c)		;Loop entry point.
+	jp (hl)		;Loop back to retpepo
+
 
 ;TIMINGS:
 ;Define n = initial value of polling loop counter; m = value of polling loop counter when an edge was detected...
@@ -55,84 +69,80 @@ endui	exx
 ;
 ;If an edge is detected:
 ;From first execution of "detedge" to "edgedet" = (32(n-m)+27)T
-;From "edgedet" to "endui" = (24m+23)T
-;Total from first execution of "detedge" to "endui" = (32n-8m+50)T
-;Total loop time = (32n-8m+120)T, which equals 1UI when m=5.
+;From "edgedet" to "endui" = (24m+15)T
+;Total from first execution of "detedge" to "endui" = (32n-8m+42)T
+;Total loop time = (32n-8m+112)T, which equals 1UI when m=4.
 
-;Theoretical "perfect" edge timing is midway between IN samples for D=6 and D=5. Time from first "detedge" to this point is 32(n-5.5) = 48T
-;Centre of eye is 0.5UI either side of this = 152T away = -104T from first "detedge".
+;Theoretical "perfect" edge timing is midway between IN samples for D=5 and D=4. Time from first "detedge" to this point is 32(n-4.5) = 48T
+;Centre of eye is 0.5UI either side of this = 136T away = -88T from first "detedge".
 
-;Time from "endui" to "process" = 39T
+;Time from "endui" to either "process" or "decode" = 39T
 
 
 ;Next section deals with interpreting / decoding a string of bits captured from tape
-process	ld a,e		;Invert contents of E first. D will be dealt with later if necessary.
-	xor c
-	inc b		;test B. If FF, then we are in the data segment. If 0 then we are waiting for sync. Else pilot tone.
-	jp z,decode
-	djnz pilot
+; Modifed to replace B/C with IXL/IXH and remove test for decode
+process	inc bc		;Compensate for dec bc in "bit1" routine if we have not yet started decoding data.
+	ld a,e
+	xor ixh		;Apply polarity inversion to received byte
+	ret c		;5T padding (condition is always false)
+	dec ixl		;Test for IXL=1, indicating waiting for sync byte
+	jr nz, pilot
 sync	cp $35		;Test for sync byte
 	jr z,datago	;Found sync byte - now start reading data
-	cp $CA		;Test for pilot byte
+	inc ixl		;Otherwise set IXL back to 1
+testpil	cp $CA		;Test for pilot byte
 	jr nz,nopilot	;Neither sync nor pilot byte received. Reset pilot counter.
 nextpil	ld d,2		;Pilot byte matches - capture next 8 bits
-	ld a,10
+	ld a,7
 	jr procpad
-pilot	dec b
-	cp $CA		;Test received byte against pilot pattern $CA
-	jr z,nextpil
-	dec de		;6T padding. Safe to corrupt DE at this point
-nopilot	ld b,$FE	;Reset pilot counter
-	xor a
-	cpl		;A=$FF
-	xor c		;Invert polarity for next pilot byte search
-	ld c,a
+pilot	ret z		;5T padding (condition is always false)
+	jr testpil
+nopilot	ld a,$FF
+	ld ixl,a	;Reset pilot counter
+	xor ixh		;Invert polarity for next pilot byte search
+	ld ixh,a
 	add a,2
 	ld d,a		;Next word captured is either 8 bits or 9 bits long, depending on polarity setting
-	ld a,9
+	ld a,5
+	nop
 procpad	dec a
 	jr nz,procpad	;16T delay loop. Delay = (16a-5)T
 	jr bit1
 datago	xor a
 	ld (eborder),a	;Change "eborder" instruction to "nop", to start showing border colours
-	ld a,10
+	ld a,decode-jrfrom
+	ld (jrfrom-1),a	;Change displacement in jump instruction to point to "decode" routine
+	ld a,6
 gopad	dec a
 	jr nz,gopad	;16T delay loop. Delay = (16a-5)T
-	djnz datago2	;Revert B to $FF. Jump is always taken.
+	ret nz		;5T padding (condition is always false)
+	jr datago2
 
-;Time from "process" to "decode" = 22T
-;Therefore time from "endui" to "decode" = 61T
 ;Time from "process" to "sample1":
-; Via "sync" and "nextpil" = 84+16a-5+16 = 255T (a=10)
-; Via "pilot" and "nextpil" = 84+16a-5+16 = 255T (a=10)
-; Via "sync" and "nopilot" = 104+16a-5+16 = 259T (a=9) *slight timing offset here, but this is a rare (error) condition anyway!
-; Via "pilot" and "nopilot" = 100+16a-5+16 = 255T (a=9)
-; Via "datago": 73+16a-5+27 = 255 (a=10)
+; Via "nextpil" = 100+16a-5+16 = 223T (a=7)
+; Via "nopilot" = 132+16a-5+16 = 223T (a=5)
+; Via "datago": 101+16a-5+31 = 223T (a=6)
 
 
-;Main tape input polling loop, with repetition rate of 32T. It is placed here to put it within reach of relative jumps in and out of the routine.
-retpepo	ret po		;This will be modified at runtime, alternating between ret po and ret pe
-	dec d
-	jr z,noedge	;If D reaches zero during this loop, then it means no data edge was detected in this Unit Interval.
-detedge	in (c)		;Loop entry point.
-	jp (hl)		;Loop back to retpepo
+;Time from "endui" to "decode" = 39T
 
-
-;Now the 8b/10b decoding routine. Will need to reset B to FF at end.
-decode	and $0F		;Decode the 3b/4b section first
+;Now the 8b/10b decoding routine
+decode	ld a,e		;Invert contents of E first. D will be dealt with later
+	xor ixh
+	and $0F		;Decode the 3b/4b section first
 	ld (fetch3b+2),a	;Set the LUT address for the 3b decode
 	ld a,e
 	sra d		;Shift the LSB of D into carry
 	rra		;and onwards into the MSB of A
 	sra d		;D should now contain $E0
 	rra		;A now contains the 6b code in the upper 6 bits
-	xor c		;Apply polarity inversion. This instruction also clears the carry flag,
+	xor ixh		;Apply polarity inversion. This instruction also clears the carry flag,
 	rra		;so RRA will put a zero in bit7
 	srl a		;but for the final shift we need to use the (slower) SRL instruction to fill bit 7 with a zero
 	add a,d		;Adding $E0 is equivalent to subtracting 32, to offset the base address for the 5b/6b LUT
 	ld (fetch5b+2),a	;Set the LUT address for the 5b decode
 fetch3b	ld a,(iy+0)	;Fetch 3b/4b LUT decode result
-	cp d		;Test for error, indicated by LUT byte value = $E0
+	cp $E0		;Test for error, indicated by LUT byte value = $E0. Note use of literal $E0 rather than register D, to add 3T.
 	jr z,error
 	and d		;D=$E0. Set the lower 5 bits to zero, keeping only the 3b decode result in the 3 top bits
 	ld e,a		;Store intermediate result
@@ -144,39 +154,34 @@ fetch5b	ld a,(iy+0)	;Fetch 5b/6b LUT decode result
 	ex af,af'
 	add a,d		;Update checksum
 	ex af,af'
-	ld a,(bc)	;7T padding. BC points to uncontended memory (ROM).
-	dec b		;Revert B to $FF
-	ld a,ixl
-	or ixh		;Test whether IX=0, and if so, then this was the final checksum byte
-	jr z,exit
-	dec ix		;Else, decrement byte counter IX
+	ld a,c
+	or b		;Test whether BC=0, and if so, then this was the final checksum byte
+	jr z,exit	;dec bc instruction relocated into "bit1" routine
 	ld (hl),d	;Finally, write the decoded byte to memory
 	inc hl		;and increment write address ready for next byte.
 datago2	ld de,$0060	;Prepare to capture 10 bits
 
 ;Timing:
-;Time from "process" to "decode" = 22T
-;Time from "decode" to "datago2" = 219T
+;Time from "decode" to "datago2" = 209T
 ;Time from "datago2" to "sample1" = 14T
-;Time from "process" to "sample1" = 255T
-;Time from "decode" to "sample1" = 233T
-;Total time from "endui" to "detedge" via decode = 61+233+80 = 374T
-;Compared to "endui" to "detedge" directly, which takes 70T, route via decode is 304T longer, which equals 1UI
+;Time from "decode" to "sample1" = 223T
+;Total time from "endui" to "detedge" via decode = 39+223+80 = 342T
+;Compared to "endui" to "detedge" directly, which takes 70T, route via decode is 272T longer, which equals 1UI
 
 ;Capture first bit of next data word. Note that E is shifted left in this process, but D is not.
 bit1	exx
 sample1	in a,(c)	;80T from here to "detedge"
-	ld de,$0708
+	ld de,$0608
 	add a,e		;A is expected to be either $FF or $BF. This is a quick method of setting or clearing the Carry flag accordingly.
 	sbc a,a		;Set A to either $FF or $00, preserving Carry flag
 	exx
 	rl e		;Shift received bit into E. No need to shift D, since there is not yet any useful data to shift into it.
+	dec bc		;Decrement byte counter BC
 	exx
 	and e
 	xor $E8		;Construct RET PE / RET PO opcode
 	ld (hl),a	;Place at "retpepo" address
-	nop		;4T padding
-	jr detedge
+	jp detedge
 
 ;Exit and return
 exit	ex af,af'
