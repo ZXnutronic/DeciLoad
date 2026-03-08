@@ -58,15 +58,15 @@ Currently the output WAV file is always in 16-bit (signed) format. Generally the
 
 To encode input file "data.bin" at the default baud-rate of 10.4kbaud, using default tape pre-compensation settings:
 
-deciload data.bin output.wav
+>deciload data.bin output.wav
 
 To encode input file "data.bin" without any pre-emphasis or equalisation (suitable for reading into a ZX Spectrum emulator), at the 11.5k baud rate:
 
-deciload -e0 -l0 -b11513 data.bin output.wav
+>deciload -e0 -l0 -b11513 data.bin output.wav
 
 To encode input file "data.bin" with mild pre-emphasis and equalisation (suitable for reading into an emulator, but may also work if supplied directly to a real Spectrum from a laptop / digital audio device), at the 12.8k baud rate:
 
-deciload -e30 -l300 -b12868 data.bin output.wav
+>deciload -e30 -l300 -b12868 data.bin output.wav
 
 These are only examples. All combinations of different options and baud rates may be used.
 
@@ -106,9 +106,9 @@ Call address 65288 with interrupts disabled, base address for load data in HL, a
 
 **12.8kbaud loader:**
 
-Call address 65272 with interrupts disabled, base address for load data in HL, and data length in BC*. Stack pointer must be in uncontended memory.
+Call address 65272 with interrupts disabled, base address for load data in HL, and data length in BC. Stack pointer must be in uncontended memory.
 
-*Note different register assignment for the "data length" value between the 8.1 / 10.4 / 11.5k loaders and the 12.8k loader.
+*Note different register assignment for the "data length" variable between the 8.1 / 10.4 / 11.5k loaders and the 12.8k loader.
 
 
 The code can be reassembled with a different origin address if required, provided the code remains in uncontended memory. The code contains absolute jumps and is not relocatable without reassembling.
