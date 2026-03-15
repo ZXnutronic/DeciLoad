@@ -1,6 +1,6 @@
 /*
 
-DeciLoad Encoder v1.0 (c) 2026 Jonah Nuttgens
+DeciLoad Encoder v1.1.1 (c) 2026 Jonah Nuttgens
 =============================================
 
 Fast tape-loading system for the ZX Spectrum, using the 8b/10b encoding scheme.
@@ -22,11 +22,11 @@ The impulse response started life as a windowed-sinc function (hence the array n
 
 The encoded data is prefixed with a lead-in sequence consisting of a "pilot tone" and a "sync byte". The "pilot tone" is not really a tone, but actually a repeated 8-bit sequence, defaulting to $CA (11001010 binary). This allows the loader to synchronise its bit-clock, word-clock, and simultaneously to determine the tape signal polarity. The "sync byte", defaulting to $35 (00110101 binary) indicates the end of the pilot tone and the start of 10-bit encoded data words.
 
-At the end of the payload data, a final checksum byte is appended (also 8b/10b-encoded). The checksum is calculated so that the modulo-256 sum of every byte in the input data plus the checksum is always equal to zero. This is used by the loader to verify the decoded data at the end of loading, and to flag a loading error if the total is other than zero.
+At the end of the payload data, a final checksum byte and one additional dummy lead-out byte are appended (also 8b/10b-encoded). The checksum is calculated so that the modulo-256 sum of every byte in the input data plus the checksum is always equal to zero. This is used by the loader to verify the decoded data at the end of loading, and to flag a loading error if the total is other than zero. The lead-out byte is added to avoid issues with truncation of the WAV file in some applications.
 
 The waveform data constructed from the overlaid impulse responses is further (optionally) post-processed before writing to the output WAV file, to pre-compensate for losses in the tape-recording process and the tape input circuitry of the ZX Spectrum. The processing steps consist of:
 	- Up to two stages of low-frequency correction, primarily to compensate for the (undersized) AC-coupling capacitor in the EAR input of the 48k Spectrum. Can also be used to compensate low-frequency losses in the tape recording process. Best results seem to be obtained with just one correction stage enabled, with a corner-frequency around 1.2kHz being roughly optimal for loading on the 48k Spectrum.
-	- Phase correction using an all-pass filter, to compensate for phase nonlinerity of cassette tape. Optimal values of the time-constant variable for the cassette recorders I've tested range between about 30-70us (3e-5 to 7e-5). However, better results have been obtained in practice by leaving this feature disabled (t_apf=0), and instead using "offset pre-emphasis" in the impulse response.
+	- Phase correction using an all-pass filter, to compensate for phase nonlinerity of cassette tape. Optimal values of the time-constant variable for the cassette recorders I've tested range between about 25-70us (2.5e-5 to 7e-5). However, better results have been obtained in practice by leaving this feature disabled (t_apf=0), and instead using "offset pre-emphasis" in the impulse response.
 
 
 USAGE:
@@ -40,7 +40,7 @@ Options (note no space between the specifier letter and the value):
 	-s<sync byte> : Sync byte value, in hexadecimal (default 0x35)
 	-l<frequency> : Corner frequency for first low-frequency correction filter, in Hz (default 1200)
 	-L<frequency> : Corner frequency for second low-frequency correction filter, in Hz (default 0)
-	-a<amplitude> : Amplitude of impulse response, in decimal (default 11000)
+	-a<amplitude> : Amplitude of impulse response, in decimal (default 43)
 	-e<emphasis %> : Percentage pre-emphasis, from 0 to 100 (default 50)
 	-o<offset> : Offset pre-emphasis waveform, to correct tape phase distortion. Valid range -1 to +1 (default -0.5)
 	-p<time> : Time-constant for phase-correction filter (default 0)
@@ -84,7 +84,7 @@ FormatChunk	wave_fmt_chunk;
 unsigned long	input_data_size;
 char		input_data[256];	/* Process 256 bytes of input file at a time */
 float		*wav_process;		/* Storage for intermediate processing of WAV data */
-short int	*wav_data_out;		/* Storage space for WAV data */
+char		*wav_data_out;		/* Storage space for WAV data */
 FILE		*output_ptr;
 int		wsinc_size;
 float		kbw;
@@ -119,7 +119,7 @@ float		apf_coef;
 float		integrator = 0;
 float		integrator2 = 0;
 float		c_apf = 0;		/* Low-pass filter forming part of the all-pass filter */
-float		wav_amp = 11000;
+float		wav_amp = 43;
 int		leadin_bytes = 500;	/* Number of lead-in bytes, including sync byte */
 char		pilot_byte = 0xCA;
 char		sync_byte = 0x35;
@@ -170,10 +170,11 @@ fseek(input_ptr, 0, SEEK_SET);
 
 printf("Data Size = %u\n", input_data_size);
 
-/* Increase by 1 to include checksum byte */
-input_data_size++;
+/* Increase by 2 to include checksum byte and lead-out byte */
+input_data_size = input_data_size + 2;
 
-output_data_size = (int)(((input_data_size*10+leadin_bytes*8)+(2*wsinc_len))*(wav_sample_rate/baud_rate))*2; /* 2 bytes per sample */
+output_data_size = (int)(((input_data_size*10+leadin_bytes*8)+(2*wsinc_len))*(wav_sample_rate/baud_rate));
+/* Note that the above calculation includes 10 bits for the encoded checksum, and 10 bits for the encoded lead-out byte */
 wav_buffer_size = (((256*10)+(2*wsinc_len))*wav_sample_rate/baud_rate)+1;
 impulse_duration = (wsinc_len*wav_sample_rate/baud_rate)+1;	/* +1 to round up. Exact integer gets 1 added. */
 
@@ -183,14 +184,14 @@ printf("Output Buffer Size = %u\n", wav_buffer_size);
 wave_fmt_chunk.wFormatTag = 1;
 wave_fmt_chunk.wChannels = 1;
 wave_fmt_chunk.dwSamplesPerSec = wav_sample_rate;
-wave_fmt_chunk.dwAvgBytesPerSec = 2*wav_sample_rate;
-wave_fmt_chunk.wBlockAlign = 2;
-wave_fmt_chunk.wBitsPerSample = 16;
+wave_fmt_chunk.dwAvgBytesPerSec = wav_sample_rate;
+wave_fmt_chunk.wBlockAlign = 1;
+wave_fmt_chunk.wBitsPerSample = 8;
 
 
 /* Open output file and write header */
 /* This includes 256 samples padding at end */
-if((output_ptr=write_wav_head(output_fname, &wave_fmt_chunk, output_data_size+512)) == NULL){
+if((output_ptr=write_wav_head(output_fname, &wave_fmt_chunk, output_data_size+256)) == NULL){
 	printf("Unable to open output file\n");
 	return(1);
 	}
@@ -199,7 +200,7 @@ if((output_ptr=write_wav_head(output_fname, &wave_fmt_chunk, output_data_size+51
 /* Allocate memory for data arrays */
 wsinc = (float*)malloc(wsinc_size*sizeof(float)); /* Space for half of Windowed-Sinc function (symmetrical) */
 wav_process = (float*)malloc(wav_buffer_size*sizeof(float));
-wav_data_out = (short int*)malloc(wav_buffer_size*2); /* Allocate enough space for (wav_buffer_size) output samples */
+wav_data_out = (char*)malloc(wav_buffer_size); /* Allocate enough space for (wav_buffer_size) output samples */
 
 if((wav_data_out == NULL) || (wav_process == NULL) \
 	|| (wsinc == NULL)){
@@ -260,23 +261,23 @@ while(input_data_size){
 	else if(leadin_bytes)
 		block_size = leadin_bytes;
 	else{
-		if (input_data_size > 257)
+		if (input_data_size > 258)
 			block_size = 256;
+		else if (input_data_size > 2)
+			block_size = input_data_size-2;
 		else
-			block_size = input_data_size-1;
+			block_size = 0;
 
 		if (block_size)
 			fread(input_data, 1, block_size, input_ptr);
-		input_data_size -= block_size;
-
-		if (block_size < 256){	/* Last block - append checksum */
-			for(i=0; i<block_size; i++)
-				checksum += input_data[i];
-			input_data[block_size] = 0 - checksum;
-			block_size++;
-			input_data_size = 0;
-			}
+		else{	/* Final block, containing only the checksum and lead-out byte */
+			input_data[0] = 0 - checksum;
+			input_data[1] = 0x4A;	/* Lead-out byte, encodes as 0101010101 */
+			block_size = 2;
 		}
+
+		input_data_size -= block_size;
+	}
 
 	for(i=0; i<block_size; i++){
 
@@ -347,20 +348,20 @@ while(input_data_size){
 	for(i=0; i<block_size; i++){
 		temp = integrator + wav_process[i]; 	/* Output of first LF correction stage */
 		integrator = 0.98 * integrator + int_coef * wav_process[i];
-		temp1 = wav_amp * (integrator2 + temp);
+		temp1 = integrator2 + temp;
 		integrator2 = 0.98 * integrator2 + int_coef2 * temp;
 		c_apf = c_apf * apf_coef + temp1 * (1.0 - apf_coef);
-		temp = 2 * c_apf - temp1;	/* Output of all-pass filter */
+		temp = wav_amp * (2 * c_apf - temp1);	/* Output of all-pass filter */
 		c_apf = c_apf * apf_coef + temp1 * (1.0 - apf_coef);
-		if (temp > 32767)
-			wav_data_out[i] = (short int)32767;
-		else if (temp < -32767)
-			wav_data_out[i] = (short int)-32767;
+		if (temp > 127)
+			wav_data_out[i] = (char)255;
+		else if (temp < -128)
+			wav_data_out[i] = (char)0;
 		else
-			wav_data_out[i] = (short int)(temp);
+			wav_data_out[i] = (char)(temp+128);
 	}
 
-	fwrite(wav_data_out, 2, block_size, output_ptr);
+	fwrite(wav_data_out, 1, block_size, output_ptr);
 	output_file_pos += block_size;
 	output_pos -= block_size;
 
@@ -375,36 +376,36 @@ while(input_data_size){
 
 /* Write remaining contents of buffer to WAV file */
 
-block_size = (int)(output_data_size/2)-output_file_pos;
+block_size = (int)(output_data_size)-output_file_pos;
 
 
 
 for(i=0; i<block_size; i++){
 	temp = integrator + wav_process[i]; 	/* Output of first LF correction stage */
 	integrator = 0.98 * integrator + int_coef * wav_process[i];
-	temp1 = wav_amp * (integrator2 + temp);
+	temp1 = integrator2 + temp;
 	integrator2 = 0.98 * integrator2 + int_coef2 * temp;
 	c_apf = c_apf * apf_coef + temp1 * (1.0 - apf_coef);
-	temp = 2 * c_apf - temp1;	/* Output of all-pass filter */
+	temp = wav_amp * (2 * c_apf - temp1);	/* Output of all-pass filter */
 	c_apf = c_apf * apf_coef + temp1 * (1.0 - apf_coef);
-	if (temp > 32767)
-		wav_data_out[i] = (short int)32767;
-	else if (temp < -32767)
-		wav_data_out[i] = (short int)-32767;
+	if (temp > 127)
+		wav_data_out[i] = (char)255;
+	else if (temp < -128)
+		wav_data_out[i] = (char)0;
 	else
-		wav_data_out[i] = (short int)(temp);
+		wav_data_out[i] = (char)(temp+128);
 	}
 
-fwrite(wav_data_out, 2, block_size, output_ptr);
+fwrite(wav_data_out, 1, block_size, output_ptr);
 
 /* Append silence */
 for(i=0; i<256; i++){
-	wav_data_out[i] = (short int)(wav_amp*(integrator+integrator2));
+	wav_data_out[i] = (char)(wav_amp*(integrator+integrator2)+128);
 	integrator2 = 0.98 * integrator2 + int_coef2 * integrator;
 	integrator = 0.98 * integrator;
 	}
 
-fwrite(wav_data_out, 2, 256, output_ptr);
+fwrite(wav_data_out, 1, 256, output_ptr);
 
 output_file_pos += block_size+256;
 printf("%d samples written\n", output_file_pos);
