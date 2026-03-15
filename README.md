@@ -37,7 +37,7 @@ Options (note no space between the specifier letter and the value):
 
 -L[frequency] : Corner frequency for second low-frequency correction filter, in Hz (default 0)
 	
--a[amplitude] : Amplitude of impulse response, in decimal (default 11000)
+-a[amplitude] : Amplitude of impulse response, in decimal (default 43)
 	
 -e[emphasis] : Percentage pre-emphasis, from 0 to 100 (default 50)
 	
@@ -51,7 +51,7 @@ Output filename: output audio file in .WAV file format. The filename should incl
 
 The default values for pre-emphasis and low-frequency compensation have been found to be roughly optimal for reliable operation when recorded to cassette tape and loaded on a 48k ZX Spectrum. The pre-compensation process manipulates the input waveform quite strongly, to the extent that the data is generally unrecognisable if it has NOT been passed through a tape recording / playback process and through the tape input circuitry of a real ZX Spectrum. Spectrum emulators generally do NOT model the signal manipulation effects of real tape and ZX Spectrum hardware, and so will fail to load an encoded WAV file using the default settings. To generate a DeciLoad-encoded WAV file suitable for loading into an emulator, some of the pre-compensation options must be disabled or significantly reduced in magnitude.
 
-Currently the output WAV file is always in 16-bit (signed) format. Generally the output will easily tolerate conversion to 8-bit resolution without affecting reliability. (I would NOT recommend compressing it with a lossy codec such as MP3!)
+The output WAV file is in 1-channel (mono), 8-bit (unsigned) format.
 
 
 **Examples:**
@@ -81,7 +81,7 @@ These are only examples. All combinations of different options and baud rates ma
 
 -l[frequency] / -L[frequency] : Two stages of low-frequency boost with programmable corner frequencies. Best results are obtained with only one stage used (the other set to zero). The boost compensates for the low-frequency cutoff of the AC-coupling capacitor in series with the tape "EAR" input of the ZX Spectrum, and can also help compensate for the low-frequency cutoff of the cassette recorder / playback circuitry. Optimum value for a 48k Spectrum is about 1.2kHz. Optimum value for the 128k Spectrum models is not yet known, but will probably also work adequately with the same value.
 
--a[amplitude] : Sets the signal amplitude of the encoded data in the WAV file prior to post-processing (low-frequency boost and phase correction). Default value of 11000 should work well with typical settings. If you need to use more aggressive correction values, then check the output WAV file in a wave editor to look for clipping, and reduce the amplitude value if necessary.
+-a[amplitude] : Sets the signal amplitude of the encoded data in the WAV file prior to post-processing (low-frequency boost and phase correction). Default value of 43 should work well with typical settings. If you need to use more aggressive correction values, then check the output WAV file in a wave editor to look for clipping, and reduce the amplitude value if necessary.
 
 -e[emphasis] : Applies an amplitude boost to each data transition, to emphasize edges in the output waveform and attenuate the constant "DC" signal content occurring in runs of consecutive zeroes and ones. Default value of 50% works well when recording on tape.
 
