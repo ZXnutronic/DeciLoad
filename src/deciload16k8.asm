@@ -1,4 +1,4 @@
-; DeciLoad 11.5kbaud Loader v1.1
+; DeciLoad 16.8kbaud Loader v1.2
 ; (c) 2026 Jonah Nuttgens
 ; Unit Interval = 208 T-states
 ; Baud rate = 16827baud at 3.5MHz
